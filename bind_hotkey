@@ -1,0 +1,20 @@
+import pandas as pd
+import pyautogui as pag
+import pyperclip, time
+import keyboard
+
+address = r'C:\Users\'
+
+df = pd.read_excel(address)
+myList = df.iloc[:,0].tolist()
+
+
+def button_press():
+    global myList
+    for item in myList:
+        pyperclip.copy(item)
+        time.sleep(0.1)
+        pag.hotkey('ctrl', 'v')        
+        pag.press('enter')
+
+keyboard.add_hotkey('alt + `', button_press)
