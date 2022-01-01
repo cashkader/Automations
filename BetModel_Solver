@@ -1,0 +1,65 @@
+import csv, os, numpy as np, scipy.optimize, statistics, pandas as pd
+from scipy.stats import norm
+
+os.chdir(r'')
+
+def readCsvFile(fname):
+    with open(fname, 'r') as inf:
+        return list(csv.reader(inf))
+        
+# Get team data
+team = readCsvFile('teams2.csv')  # list of num,name
+numTeams = len(team)
+
+# Get game data
+game = readCsvFile('games2.csv')  # list of game,home,away,homescore,awayscore
+numGames = len(game)
+
+# First we create a matrix M which will hold the data on
+# who played whom in each game and who had home-field advantage.
+m_rows = numTeams + 1
+m_cols = numGames
+M = np.zeros( (m_rows, m_cols) )
+
+# Then we create a vector S which will hold the final
+# relative scores for each game.
+s_cols = numGames
+S = np.zeros(s_cols)
+
+# Loading M and S with game data
+homegoals,awaygoals=[],[]
+for col,gamedata in enumerate(game):
+    gameNum,home,away,homescore,awayscore = gamedata
+    homegoals.append(homescore)
+    awaygoals.append(awayscore)
+    # In the csv data, teams are numbered starting at 1
+    # So we let home-team advantage be 'team 0' in our matrix
+    M[0, col]         =  1.0   # home team advantage
+    M[int(home), col] =  1.0
+    M[int(away), col] = -1.0
+    S[col]            = int(homescore) - int(awayscore)
+    
+init_W = np.array([0.0]+[0.0]*numTeams)
+
+homegoals = [int(i) for i in homegoals]
+awaygoals = [int(i) for i in awaygoals]
+goals = [homegoals,awaygoals]
+totalgoals = homegoals + awaygoals
+totalgoals = [int(item) for item in totalgoals]
+Ave = statistics.mean(totalgoals)
+Std = statistics.stdev(totalgoals)
+
+def errorfn(w,m,s):
+    par_est = w.dot(m)
+    z_score = [norm.ppf(np.exp(i)/(1+np.exp(i))) for i in par_est]
+    est = Ave+(np.array(z_score)*Std)
+    return est - np.array(s)
+    
+H = scipy.optimize.leastsq(errorfn, init_W, args=(M,homegoals))
+A = scipy.optimize.leastsq(errorfn, init_W, args=(M,awaygoals))
+
+HomeStrength = H[0][1:]
+AwayStrength = A[0][1:]
+
+df = pd.DataFrame({'HomeStrength': HomeStrength,'AwayStrength': AwayStrength})
+df.to_excel(excel_writer = "StrengthTable.xlsx")
