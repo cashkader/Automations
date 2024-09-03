@@ -1,0 +1,49 @@
+import os
+import hashlib
+
+def hash_file(filepath):
+    """Generate a hash for a file."""
+    hasher = hashlib.md5()  # You can use hashlib.sha256() if you prefer
+    with open(filepath, 'rb') as f:
+        buf = f.read()
+        hasher.update(buf)
+    return hasher.hexdigest()
+
+def store_hashes(folder):
+    """Hash all files in a folder and store the results."""
+    hashes = {}
+    for root, dirs, files in os.walk(folder):
+        for file in files:
+            filepath = os.path.join(root, file)
+            filehash = hash_file(filepath)
+            hashes[filepath] = filehash
+    return hashes
+
+def find_duplicates(existing_hashes, new_folder):
+    """Find duplicates between existing hashes and a new batch of files."""
+    duplicates = []
+    for root, dirs, files in os.walk(new_folder):
+        for file in files:
+            filepath = os.path.join(root, file)
+            filehash = hash_file(filepath)
+            if filehash in existing_hashes.values():
+                duplicates.append(filepath)
+    return duplicates
+
+# Paths to your existing and new invoice folders
+existing_invoices_folder = 'path_to_existing_invoices'
+new_invoices_folder = 'path_to_new_invoices'
+
+# Hash the existing invoices and store their hashes
+existing_hashes = store_hashes(existing_invoices_folder)
+
+# Find duplicates in the new invoices batch
+duplicates = find_duplicates(existing_hashes, new_invoices_folder)
+
+# Output duplicates
+if duplicates:
+    print("Duplicate files found:")
+    for dup in duplicates:
+        print(dup)
+else:
+    print("No duplicates found.")
