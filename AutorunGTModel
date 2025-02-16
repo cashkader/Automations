@@ -1,9 +1,83 @@
-import numpy as np
-import pandas as pd
 import os
+import time
+import schedule
+import pandas as pd
+import numpy as np
+import requests
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 from scipy.stats import norm
 
-os.chdir()
+
+# Telegram Configuration
+TELEGRAM_BOT_TOKEN = '7528354342:AAG2iRNqpNgSEhykp6WuUf5XSVlVAWGVu80'
+TELEGRAM_CHAT_ID = '-1001155462245'
+
+# Define the threshold for a value bet
+VALUE_BET_THRESHOLD = 0.05  # Change this value as needed
+
+
+os.chdir(r'C:\Users\markr\Dropbox\Esoccer GT')
+webdriver_service = Service(r'C:\Users\markr\Documents\Python\chromedriver.exe')
+driver = webdriver.Chrome(service=webdriver_service)
+url = 'https://www.tippmix.hu/sportfogadas#?sportid=999&countryid=99999988&competitiontype=undefined&page='
+
+# Define WebDriverWait
+wait = WebDriverWait(driver, 1)  # 1 second timeout
+
+
+# Function to scrape Tippmix data
+def scrape_tippmix():
+    Games, HomeOdds, DrawOdds, AwayOdds = [], [], [], []
+    
+    for page in range(1, 2):
+        driver.get(url + str(page))
+        driver.refresh()
+        time.sleep(2)  # Allow time for page load
+        
+        try:
+            button = wait.until(EC.element_to_be_clickable((By.XPATH, "//*[@id='js-accept-all']")))
+            button.click()
+        except:
+            pass  # Ignore if no button found
+        
+        for game in range(1, 21):
+            try:
+                Game = driver.find_element(By.XPATH, f"//*[@id='wrapper']/main/section/div/div[2]/table/tbody/tr[{game}]/td[4]/a").text
+                HO = driver.find_element(By.XPATH, f"//*[@id='wrapper']/main/section/div/div[2]/table/tbody/tr[{game}]/td[5]/div/button/span").text
+                DO = driver.find_element(By.XPATH, f"//*[@id='wrapper']/main/section/div/div[2]/table/tbody/tr[{game}]/td[6]/div/button/span").text
+                AO = driver.find_element(By.XPATH, f"//*[@id='wrapper']/main/section/div/div[2]/table/tbody/tr[{game}]/td[7]/div/button/span").text
+                
+                Games.append(Game)
+                HomeOdds.append(HO)
+                DrawOdds.append(DO)
+                AwayOdds.append(AO)
+            except:
+                break  # Stop if no more matches
+    
+    Match = [item.split('\n')[1] for item in Games if 'GT' in item]
+    HomeTeam = [item.split('(')[1].split(')')[0] for item in Games if 'GT' in item]
+    AwayTeam = [item.split('(')[2].split(')')[0] for item in Games if 'GT' in item]
+    Date = [game[-12:] for game in Games]
+    
+    HomeOdd = [item2[:4].replace(",", ".") for item1, item2 in zip(Games, HomeOdds) if 'GT' in item1]
+    DrawOdd = [item2[:4].replace(",", ".") for item1, item2 in zip(Games, DrawOdds) if 'GT' in item1]
+    AwayOdd = [item2[:4].replace(",", ".") for item1, item2 in zip(Games, AwayOdds) if 'GT' in item1]
+    
+    df = pd.DataFrame(list(zip(Date, HomeTeam, AwayTeam, HomeOdd, DrawOdd, AwayOdd)), 
+                      columns=['Date', 'HomeTeam', 'AwayTeam', 'HomeOdd', 'DrawOdd', 'AwayOdd'])
+    df['Date'] = [date[:6] + str(21) + date[6:] for date in df['Date']]
+    df['Date'] = pd.to_datetime(df['Date'])
+    
+    df.insert(loc=2, column='blank3', value=['' for i in range(df.shape[0])])
+    df.insert(loc=2, column='blank2', value=['' for i in range(df.shape[0])])
+    df.insert(loc=1, column='blank1', value=['' for i in range(df.shape[0])])
+    
+    return df
+
 
 def load_lookup_table(file_path, sheet_name):
     df = pd.read_excel(file_path, sheet_name=sheet_name, usecols="AI:AK", skiprows=6)
@@ -13,6 +87,7 @@ def load_lookup_table(file_path, sheet_name):
     lookup_dict = df.set_index("TEAM")[["Home", "Away"]].to_dict(orient="index")
 
     return lookup_dict
+
 
 def load_excel_values(file_path, sheet_name):
     """ Load specific cell values from the Excel file """
@@ -26,6 +101,7 @@ def load_excel_values(file_path, sheet_name):
         "AwayAdj": df.iloc[3, 7]
     }
     return values
+
 
 def calculate_team_advantage(home_team, away_team, lookup_table, excel_values):
     """
@@ -81,6 +157,7 @@ def calculate_team_advantage(home_team, away_team, lookup_table, excel_values):
         "Estimated_Away_Win_Prob": estimated_win_away
     }
 
+
 def load_tippmix_data(file_path, sheet_name):
     """
     Load match data from the GT_tippmix Excel file, including Date/Time.
@@ -92,8 +169,8 @@ def load_tippmix_data(file_path, sheet_name):
     df = pd.read_excel(file_path, sheet_name=sheet_name, usecols="A,C,F,G,I")  # Include Date/Time
     df.columns = ["DateTime", "HomeTeam", "AwayTeam", "HomeTeamOdd", "AwayTeamOdd"]  # Rename columns
     df["DateTime"] = pd.to_datetime(df["DateTime"], errors="coerce")  # Convert to datetime format
-
     return df
+
 
 def analyze_value_bets(tippmix_df, lookup_table, excel_values):
     """
@@ -144,9 +221,39 @@ def analyze_value_bets(tippmix_df, lookup_table, excel_values):
 
     return results_df
 
+
+def send_telegram_alerts(results_df):
+    for _, row in results_df.iterrows():
+        if row["Home Value Bet"] > VALUE_BET_THRESHOLD or row["Away Value Bet"] > VALUE_BET_THRESHOLD:
+            recommended_bet = "Home" if row["Home Value Bet"] > row["Away Value Bet"] else "Away"
+            bet_odd = row["Home Team Odd"] if recommended_bet == "Home" else row["Away Team Odd"]
+            value_bet = round(max(row['Home Value Bet'], row['Away Value Bet']), 2)  # Keep two decimal places
+            
+            message = (f"⚽ Value Bet Alert! ⚽\n"
+                       f"Date: {row['DateTime']}\n"
+                       f"Home: {row['Home Team']}\n"
+                       f"Away: {row['Away Team']}\n"
+                       f"Recommended Bet: {recommended_bet}\n"
+                       f"Odd: {bet_odd}\n"
+                       f"Value Bet: {value_bet}")
+            
+            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+            params = {
+                "chat_id": TELEGRAM_CHAT_ID,
+                "text": message
+            }
+            
+            response = requests.get(url, params=params)
+            print("Telegram Response:", response.json())  # Debugging output
+
+
 # File paths
 tippmix_file_path = "GT_tippmix.xlsx"
 tippmix_sheet_name = "Sheet1"
+
+# Run the scraper and save the DataFrame
+df = scrape_tippmix()
+df.to_excel(tippmix_file_path, encoding='utf-8', index=False)
 
 # Load lookup table and Excel values
 lookup_table_path = "GT_League.xlsx"
@@ -161,3 +268,7 @@ tippmix_df = load_tippmix_data(tippmix_file_path, tippmix_sheet_name)
 value_bet_analysis = analyze_value_bets(tippmix_df, lookup_table, excel_values)
 
 value_bet_analysis.to_excel("value_bet_analysis.xlsx", index=False)  # Save as Excel
+
+# Load results data
+results_df = pd.read_excel("value_bet_analysis.xlsx")
+send_telegram_alerts(results_df)
