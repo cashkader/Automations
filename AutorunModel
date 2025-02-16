@@ -1,0 +1,163 @@
+import numpy as np
+import pandas as pd
+import os
+from scipy.stats import norm
+
+os.chdir()
+
+def load_lookup_table(file_path, sheet_name):
+    df = pd.read_excel(file_path, sheet_name=sheet_name, usecols="AI:AK", skiprows=6)
+    df = df.dropna(how="all")
+    df.columns = ["TEAM", "Home", "Away"]
+
+    lookup_dict = df.set_index("TEAM")[["Home", "Away"]].to_dict(orient="index")
+
+    return lookup_dict
+
+def load_excel_values(file_path, sheet_name):
+    """ Load specific cell values from the Excel file """
+    df = pd.read_excel(file_path, sheet_name=sheet_name, header=None)
+    values = {
+        "VAR": df.iloc[1, 6],
+        "AVG": df.iloc[1, 7],
+        "SD": df.iloc[1, 8],
+        "Error": df.iloc[2, 1],
+        "HomeAdj": df.iloc[3, 6],
+        "AwayAdj": df.iloc[3, 7]
+    }
+    return values
+
+def calculate_team_advantage(home_team, away_team, lookup_table, excel_values):
+    """
+    Calculate the Z-score advantage, MOV (Margin of Victory), and estimated win probabilities 
+    for both home and away teams.
+
+    :param home_team: Name of the home team
+    :param away_team: Name of the away team
+    :param lookup_table: Dictionary from the loaded Excel lookup table
+    :param excel_values: Dictionary of extracted Excel values
+    :return: Dictionary with computed Z-scores, MOV, and win probabilities for home & away teams
+    """
+    # Extract necessary values from the Excel data
+    home_adj = excel_values.get("HomeAdj", 0)
+    away_adj = excel_values.get("AwayAdj", 0)
+    avg = excel_values.get("AVG", 0)
+    sd = excel_values.get("SD", 1)  # Default to 1 to avoid division issues if SD is 0
+    error = excel_values.get("Error", 1)  # Default to 1 if missing to avoid division by zero
+    
+    # Normalize team names to avoid mismatches
+    home_team = home_team.strip()
+    away_team = away_team.strip()
+    
+    # Fetch lookup values correctly
+    home_team_home_value = lookup_table.get(home_team, {}).get("Home", 0)  # Home team at home
+    home_team_away_value = lookup_table.get(home_team, {}).get("Away", 0)  # Home team at home
+    away_team_home_value = lookup_table.get(away_team, {}).get("Home", 0)  # Away team playing away
+    away_team_away_value = lookup_table.get(away_team, {}).get("Away", 0)  # Away team playing away
+    
+
+    # Compute parameter estimates correctly
+    par_est_home = home_adj + home_team_home_value - away_team_home_value
+    par_est_away = away_adj + home_team_away_value - away_team_away_value
+    
+
+    # Compute probability using the logistic function
+    prob_home = np.exp(par_est_home) / (1 + np.exp(par_est_home))
+    prob_away = np.exp(par_est_away) / (1 + np.exp(par_est_away))
+
+    # Apply the inverse normal distribution function (NORMSINV)
+    zscore_home = norm.ppf(prob_home)
+    zscore_away = norm.ppf(prob_away)
+
+    # Compute Margin of Victory (MOV)
+    mov = (avg + zscore_home * sd) - (avg + zscore_away * sd)
+
+    # Compute estimated win probabilities
+    estimated_win_home = 1 - norm.cdf(0.5, loc=mov, scale=error)
+    estimated_win_away = 1 - norm.cdf(0.5, loc=-mov, scale=error)  # Negative MOV for away team
+
+    return {
+        "Estimated_Home_Win_Prob": estimated_win_home,
+        "Estimated_Away_Win_Prob": estimated_win_away
+    }
+
+def load_tippmix_data(file_path, sheet_name):
+    """
+    Load match data from the GT_tippmix Excel file, including Date/Time.
+
+    :param file_path: Path to the GT_tippmix Excel file
+    :param sheet_name: Sheet name containing match data
+    :return: DataFrame with extracted columns
+    """
+    df = pd.read_excel(file_path, sheet_name=sheet_name, usecols="A,C,F,G,I")  # Include Date/Time
+    df.columns = ["DateTime", "HomeTeam", "AwayTeam", "HomeTeamOdd", "AwayTeamOdd"]  # Rename columns
+    df["DateTime"] = pd.to_datetime(df["DateTime"], errors="coerce")  # Convert to datetime format
+
+    return df
+
+def analyze_value_bets(tippmix_df, lookup_table, excel_values):
+    """
+    Analyze betting odds and compare estimated probabilities with bookmakers' odds.
+
+    :param tippmix_df: DataFrame containing match data from GT_tippmix
+    :param lookup_table: Dictionary from the loaded Excel lookup table
+    :param excel_values: Dictionary of extracted Excel values
+    :return: DataFrame with match results, computed probabilities, and betting odds comparison
+    """
+    results = []
+
+    for _, row in tippmix_df.iterrows():
+        date_time = row["DateTime"]  # Extract match date/time
+        home_team = row["HomeTeam"]
+        away_team = row["AwayTeam"]
+        home_team_odd = row["HomeTeamOdd"]
+        away_team_odd = row["AwayTeamOdd"]
+
+        # Compute estimated probabilities
+        match_results = calculate_team_advantage(home_team, away_team, lookup_table, excel_values)
+
+        # Convert bookmaker odds to implied probability
+        implied_home_prob = 1 / home_team_odd if home_team_odd > 0 else 0
+        implied_away_prob = 1 / away_team_odd if away_team_odd > 0 else 0
+
+        # Compute value bets
+        home_value = home_team_odd * match_results["Estimated_Home_Win_Prob"] - 1
+        away_value = away_team_odd * match_results["Estimated_Away_Win_Prob"] - 1
+
+        # Store results
+        results.append({
+            "DateTime": date_time,  # Include match date/time
+            "Home Team": home_team,
+            "Away Team": away_team,
+            "Home Team Odd": home_team_odd,
+            "Away Team Odd": away_team_odd,
+            "Estimated Home Win Prob": match_results["Estimated_Home_Win_Prob"],
+            "Implied Home Win Prob": implied_home_prob,
+            "Home Value Bet": home_value,  # Positive value means it's a value bet
+            "Estimated Away Win Prob": match_results["Estimated_Away_Win_Prob"],
+            "Implied Away Win Prob": implied_away_prob,
+            "Away Value Bet": away_value  # Positive value means it's a value bet
+        })
+
+    # Convert to DataFrame and return
+    results_df = pd.DataFrame(results)
+
+    return results_df
+
+# File paths
+tippmix_file_path = "GT_tippmix.xlsx"
+tippmix_sheet_name = "Sheet1"
+
+# Load lookup table and Excel values
+lookup_table_path = "GT_League.xlsx"
+lookup_sheet_name = "ZSD 12d"
+lookup_table = load_lookup_table(lookup_table_path, lookup_sheet_name)
+excel_values = load_excel_values(lookup_table_path, lookup_sheet_name)
+
+# Load match data from GT_tippmix (including Date/Time)
+tippmix_df = load_tippmix_data(tippmix_file_path, tippmix_sheet_name)
+
+# Analyze value bets
+value_bet_analysis = analyze_value_bets(tippmix_df, lookup_table, excel_values)
+
+value_bet_analysis.to_excel("value_bet_analysis.xlsx", index=False)  # Save as Excel
