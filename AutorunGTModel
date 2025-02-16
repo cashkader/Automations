@@ -284,7 +284,7 @@ while True:
         run_algorithm(TIPP_FILE_PATH, TIPP_SHEET_NAME, LOOKUP_TABLE_PATH, LOOKUP_SHEET_NAME)
         
         print("⏳ Waiting for 30 minutes before next run...\n")
-        time.sleep(100)  # Wait for 1800 seconds (30 minutes)
+        time.sleep(1800)  # Wait for 1800 seconds (30 minutes)
 
     except Exception as e:
         print(f"❌ ERROR in the main loop: {e}")
