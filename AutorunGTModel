@@ -9,12 +9,12 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from scipy.stats import norm
-
+from datetime import datetime
 
 # Telegram Configuration
 TELEGRAM_BOT_TOKEN = '7528354342:AAG2iRNqpNgSEhykp6WuUf5XSVlVAWGVu80'
 TELEGRAM_CHAT_ID = '-1001155462245'
-VALUE_BET_THRESHOLD = 0.00  # Change this value as needed
+VALUE_BET_THRESHOLD = 0.20  # Change this value as needed
 
 # File paths (Will be passed explicitly)
 TIPP_FILE_PATH = "GT_tippmix.xlsx"
@@ -164,6 +164,7 @@ def load_tippmix_data(file_path, sheet_name):
     df = pd.read_excel(file_path, sheet_name=sheet_name, usecols="A,C,F,G,I")  # Include Date/Time
     df.columns = ["DateTime", "HomeTeam", "AwayTeam", "HomeTeamOdd", "AwayTeamOdd"]  # Rename columns
     df["DateTime"] = pd.to_datetime(df["DateTime"], errors="coerce")  # Convert to datetime format
+    df["DateTime"] = df["DateTime"].apply(lambda x: x.replace(year=2025) if pd.notnull(x) else x)  # Set year to 2025
     return df
 
 
@@ -218,29 +219,33 @@ def analyze_value_bets(tippmix_df, lookup_table, excel_values):
 
 
 def send_telegram_alerts(results_df):
+    current_time = datetime.now()  # Get current timestamp
+    
     for _, row in results_df.iterrows():
-        if row["Home Value Bet"] > VALUE_BET_THRESHOLD or row["Away Value Bet"] > VALUE_BET_THRESHOLD:
-            recommended_bet = "Home" if row["Home Value Bet"] > row["Away Value Bet"] else "Away"
-            bet_odd = row["Home Team Odd"] if recommended_bet == "Home" else row["Away Team Odd"]
-            value_bet = round(max(row['Home Value Bet'], row['Away Value Bet']), 2)  # Keep two decimal places
-            
-            message = (f"⚽ Value Bet Alert! ⚽\n"
-                       f"Date: {row['DateTime']}\n"
-                       f"Home: {row['Home Team']}\n"
-                       f"Away: {row['Away Team']}\n"
-                       f"Recommended Bet: {recommended_bet}\n"
-                       f"Odd: {bet_odd}\n"
-                       f"Value Bet: {value_bet}")
-            
-            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-            params = {
-                "chat_id": TELEGRAM_CHAT_ID,
-                "text": message
-            }
-            
-            response = requests.get(url, params=params)
-            print("Telegram Response:", response.json())  # Debugging output
-
+        # Only proceed if the DateTime is in the future
+        if row['DateTime'] > current_time:
+            if row["Home Value Bet"] > VALUE_BET_THRESHOLD or row["Away Value Bet"] > VALUE_BET_THRESHOLD:
+                recommended_bet = "Home" if row["Home Value Bet"] > row["Away Value Bet"] else "Away"
+                bet_odd = row["Home Team Odd"] if recommended_bet == "Home" else row["Away Team Odd"]
+                value_bet = round(max(row['Home Value Bet'], row['Away Value Bet']), 2)  # Keep two decimal places
+                
+                message = (f"⚽ Value Bet Alert! ⚽\n"
+                           f"Date: {row['DateTime']}\n"
+                           f"Home: {row['Home Team']}\n"
+                           f"Away: {row['Away Team']}\n"
+                           f"Recommended Bet: {recommended_bet}\n"
+                           f"Odd: {bet_odd}\n"
+                           f"Value Bet: {value_bet}")
+                
+                url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+                params = {
+                    "chat_id": TELEGRAM_CHAT_ID,
+                    "text": message
+                }
+                
+                response = requests.get(url, params=params)
+                print("Telegram Response:", response.json())  # Debugging output
+  
 
 def run_algorithm(tippmix_file_path, tippmix_sheet_name, lookup_table_path, lookup_sheet_name):
     """ Runs the entire scraping, processing, and alerting workflow every 30 minutes. """
